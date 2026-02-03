@@ -66,22 +66,27 @@ ngrok config add-authtoken YOUR_TOKEN_FROM_ENV_FILE
 ### 4. Install Python Dependencies
 
 ```bash
+pip install -r requirements.txt
+```
+
+Or individually:
+```bash
 pip install flask twilio python-dotenv
 ```
 
-### 4. Install Node Dependencies
+### 5. Install Node Dependencies
 
 ```bash
 npm install
 ```
 
-### 5. Configure Twilio TwiML App
+### 6. Configure Twilio TwiML App
 
 In your Twilio Console, configure your TwiML App with:
 - **Voice Request URL**: `https://your-ngrok-url.ngrok.io/voice`
 - **Voice Status Callback URL**: (optional)
 
-### 6. Start the Application
+### 7. Start the Application
 
 #### Option A: Automatic (Windows)
 
@@ -102,7 +107,7 @@ npm start
 ngrok http 5000
 ```
 
-### 7. Access the Application
+### 8. Access the Application
 
 Open your browser and navigate to:
 ```
