@@ -1,0 +1,78 @@
+.contacts {
+  grid-column: 3;
+}
+
+.contacts-container {
+  max-height: 600px;
+  overflow-y: auto;
+}
+
+.add-contact-btn {
+  width: 100%;
+  padding: 12px;
+  background: #667eea;
+  color: white;
+  border: none;
+  border-radius: 8px;
+  cursor: pointer;
+  font-weight: 600;
+  margin-bottom: 16px;
+}
+
+.add-contact-btn:hover {
+  background: #5568d3;
+}
+
+.add-contact-form {
+  background: #f8f9fa;
+  padding: 16px;
+  border-radius: 8px;
+  margin-bottom: 16px;
+}
+
+.add-contact-form input {
+  width: 100%;
+  padding: 10px;
+  border: 1px solid #ddd;
+  border-radius: 6px;
+  margin-bottom: 8px;
+}
+
+.contact-item {
+  padding: 12px;
+  background: #f8f9fa;
+  border-radius: 8px;
+  margin-bottom: 8px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  cursor: pointer;
+}
+
+.contact-item:hover {
+  background: #e9ecef;
+}
+
+.contact-name {
+  font-weight: 600;
+  color: #333;
+}
+
+.contact-number {
+  font-size: 14px;
+  color: #666;
+  margin-top: 4px;
+}
+
+.contact-actions {
+  display: flex;
+  gap: 6px;
+}
+
+.btn-delete {
+  background: #dc3545;
+}
+
+.btn-delete:hover {
+  background: #c82333;
+}

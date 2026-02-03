@@ -1,0 +1,112 @@
+.incoming-modal {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.8);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+}
+
+.modal-content {
+  background: white;
+  padding: 48px;
+  border-radius: 16px;
+  text-align: center;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+}
+
+.modal-title {
+  font-size: 18px;
+  color: #666;
+  margin-bottom: 16px;
+}
+
+.modal-caller {
+  font-size: 32px;
+  font-weight: 600;
+  color: #333;
+  margin-bottom: 32px;
+}
+
+.call-waiting-info {
+  background: #fff3cd;
+  color: #856404;
+  padding: 12px;
+  border-radius: 8px;
+  margin-bottom: 24px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 14px;
+}
+
+.modal-actions {
+  display: flex;
+  gap: 16px;
+  flex-wrap: wrap;
+  justify-content: center;
+}
+
+.btn-answer {
+  padding: 16px 48px;
+  background: #28a745;
+  color: white;
+  border: none;
+  border-radius: 12px;
+  font-size: 18px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.btn-answer:hover {
+  background: #218838;
+}
+
+.btn-hold {
+  padding: 16px 48px;
+  background: #ffc107;
+  color: #333;
+  border: none;
+  border-radius: 12px;
+  font-size: 18px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.btn-hold:hover {
+  background: #e0a800;
+}
+
+.btn-conference {
+  padding: 16px 48px;
+  background: #17a2b8;
+  color: white;
+  border: none;
+  border-radius: 12px;
+  font-size: 18px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.btn-conference:hover {
+  background: #138496;
+}
+
+.btn-reject {
+  padding: 16px 48px;
+  background: #dc3545;
+  color: white;
+  border: none;
+  border-radius: 12px;
+  font-size: 18px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.btn-reject:hover {
+  background: #c82333;
+}
