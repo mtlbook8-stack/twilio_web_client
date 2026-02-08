@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { TwilioService } from '../services/TwilioService';
 import './Dialer.css';
 
-function Dialer({ device, currentCall, setCurrentCall, status, setStatus, contacts, onCallEnd }) {
+function Dialer({ device, currentCall, setCurrentCall, status, setStatus, contacts, callLogs = [], onCallEnd }) {
   const [phoneNumber, setPhoneNumber] = useState('+');
   const [callState, setCallState] = useState('IDLE');
   const [callWith, setCallWith] = useState('');
@@ -13,13 +13,20 @@ function Dialer({ device, currentCall, setCurrentCall, status, setStatus, contac
   const [heldCall, setHeldCall] = useState(null);
   const [showKeypad, setShowKeypad] = useState(false);
   const [pipWindow, setPipWindow] = useState(null);
+  const [callerIds, setCallerIds] = useState(null);
+  const [useIsraelAlt, setUseIsraelAlt] = useState(false);
+  const [pipPermissionGranted, setPipPermissionGranted] = useState(false);
+  const [suggestions, setSuggestions] = useState([]);
+  const [selectedSuggestionIndex, setSelectedSuggestionIndex] = useState(-1);
+  const [showSuggestions, setShowSuggestions] = useState(false);
   
   const callStartTimeRef = useRef(null);
   const timerIntervalRef = useRef(null);
   const contactsRef = useRef(contacts);
   const currentCallRef = useRef(currentCall);
+  const useIsraelAltRef = useRef(false);
   
-  // Keep refs in sync with props
+  // Keep refs in sync with props and state
   useEffect(() => {
     contactsRef.current = contacts;
   }, [contacts]);
@@ -27,6 +34,29 @@ function Dialer({ device, currentCall, setCurrentCall, status, setStatus, contac
   useEffect(() => {
     currentCallRef.current = currentCall;
   }, [currentCall]);
+
+  useEffect(() => {
+    useIsraelAltRef.current = useIsraelAlt;
+  }, [useIsraelAlt]);
+
+  // Fetch available caller IDs
+  useEffect(() => {
+    fetch('/api/caller-ids')
+      .then(res => res.json())
+      .then(data => setCallerIds(data))
+      .catch(err => console.error('Failed to fetch caller IDs:', err));
+  }, []);
+
+  // Process call logs into unique numbers
+  const callHistory = React.useMemo(() => {
+    const uniqueNumbers = {};
+    callLogs.forEach(call => {
+      if (!uniqueNumbers[call.number] || new Date(call.timestamp) > new Date(uniqueNumbers[call.number].timestamp)) {
+        uniqueNumbers[call.number] = call;
+      }
+    });
+    return Object.values(uniqueNumbers);
+  }, [callLogs]);
 
   useEffect(() => {
     // Handle keyboard shortcuts
@@ -54,19 +84,29 @@ function Dialer({ device, currentCall, setCurrentCall, status, setStatus, contac
 
   // Auto-open PiP when window is minimized/hidden
   useEffect(() => {
-    if (!isInCall) return;
+    if (!isInCall || !pipPermissionGranted) return;
 
-    const handleVisibilityChange = () => {
+    const handleVisibilityChange = async () => {
       if (document.hidden && isInCall && !pipWindow && 'documentPictureInPicture' in window) {
-        openPiP();
+        try {
+          await openPiP();
+        } catch (error) {
+          console.log('Auto-PiP blocked by browser (requires direct user interaction). Use PiP button instead.');
+          setPipPermissionGranted(false); // Reset permission flag
+        }
       }
     };
 
-    const handleBlur = () => {
+    const handleBlur = async () => {
       if (isInCall && !pipWindow && 'documentPictureInPicture' in window) {
-        setTimeout(() => {
+        setTimeout(async () => {
           if (document.hidden) {
-            openPiP();
+            try {
+              await openPiP();
+            } catch (error) {
+              console.log('Auto-PiP blocked by browser (requires direct user interaction). Use PiP button instead.');
+              setPipPermissionGranted(false); // Reset permission flag
+            }
           }
         }, 500);
       }
@@ -79,7 +119,7 @@ function Dialer({ device, currentCall, setCurrentCall, status, setStatus, contac
       document.removeEventListener('visibilitychange', handleVisibilityChange);
       window.removeEventListener('blur', handleBlur);
     };
-  }, [isInCall, pipWindow]);
+  }, [isInCall, pipWindow, pipPermissionGranted]);
 
   const handlePhoneInput = (e) => {
     let value = e.target.value;
@@ -97,13 +137,60 @@ function Dialer({ device, currentCall, setCurrentCall, status, setStatus, contac
     if (!value) value = '+';
     
     setPhoneNumber(value);
+
+    // Filter suggestions
+    if (value.length > 1) {
+      const filtered = callHistory.filter(call => {
+        const number = call.number.toLowerCase();
+        const name = (call.name || '').toLowerCase();
+        const searchTerm = value.toLowerCase();
+        return number.includes(searchTerm) || name.includes(searchTerm);
+      }).slice(0, 5); // Limit to 5 suggestions
+      
+      setSuggestions(filtered);
+      setShowSuggestions(filtered.length > 0);
+      setSelectedSuggestionIndex(-1);
+    } else {
+      setSuggestions([]);
+      setShowSuggestions(false);
+      setSelectedSuggestionIndex(-1);
+    }
   };
 
   const handlePhoneKeyDown = (e) => {
     const input = e.target;
     if (e.key === 'Backspace' && input.selectionStart === 1 && input.selectionEnd === 1) {
       e.preventDefault();
+      return;
     }
+
+    // Handle arrow keys for suggestion navigation
+    if (showSuggestions && suggestions.length > 0) {
+      if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        setSelectedSuggestionIndex(prev => 
+          prev < suggestions.length - 1 ? prev + 1 : prev
+        );
+      } else if (e.key === 'ArrowUp') {
+        e.preventDefault();
+        setSelectedSuggestionIndex(prev => prev > 0 ? prev - 1 : -1);
+      } else if (e.key === 'Enter' && selectedSuggestionIndex >= 0) {
+        e.preventDefault();
+        selectSuggestion(suggestions[selectedSuggestionIndex]);
+      } else if (e.key === 'Escape') {
+        setShowSuggestions(false);
+        setSelectedSuggestionIndex(-1);
+      }
+    }
+  };
+
+  const selectSuggestion = (call) => {
+    setPhoneNumber(call.number);
+    setShowSuggestions(false);
+    setSuggestions([]);
+    setSelectedSuggestionIndex(-1);
+    // Focus back on input
+    document.getElementById('phoneInput')?.focus();
   };
 
   const makeCall = async (numberToCall) => {
@@ -120,12 +207,22 @@ function Dialer({ device, currentCall, setCurrentCall, status, setStatus, contac
       return;
     }
 
+    // Grant PiP permission on user action
+    setPipPermissionGranted(true);
+
     try {
       console.log('Making call to:', targetNumber);
+      console.log('useIsraelAlt state:', useIsraelAlt);
+      console.log('useIsraelAlt REF:', useIsraelAltRef.current);
 
-      const call = await device.connect({
-        params: { To: targetNumber }
-      });
+      const params = { 
+        To: targetNumber,
+        UseIsraelAlt: useIsraelAltRef.current.toString()
+      };
+      
+      console.log('Sending params:', params);
+
+      const call = await device.connect({ params });
 
       setCurrentCall(call);
       setCallWith(getContactName(targetNumber) || targetNumber);
@@ -135,6 +232,10 @@ function Dialer({ device, currentCall, setCurrentCall, status, setStatus, contac
       call._outgoingNumber = targetNumber;
       call._direction = 'outgoing';
       call._endHandlersAttached = true; // Mark that we're setting up handlers
+      
+      // Extract call SID (available after connection starts)
+      call._callSid = call.parameters.CallSid;
+      console.log('📞 Outgoing Call SID:', call._callSid);
       
       TwilioService.setupCallEvents(call, {
         onRinging: () => {
@@ -151,25 +252,25 @@ function Dialer({ device, currentCall, setCurrentCall, status, setStatus, contac
         onDisconnected: (status) => {
           if (!call._manualHangup && !call._alreadyLogged) {
             call._alreadyLogged = true;
-            handleCallEnd(call._outgoingNumber || targetNumber, 'outgoing', status);
+            handleCallEnd(call._outgoingNumber || targetNumber, 'outgoing', status, call._callSid);
           }
         },
         onCanceled: (status) => {
           if (!call._alreadyLogged) {
             call._alreadyLogged = true;
-            handleCallEnd(call._outgoingNumber || targetNumber, 'outgoing', status);
+            handleCallEnd(call._outgoingNumber || targetNumber, 'outgoing', status, call._callSid);
           }
         },
         onRejected: (status) => {
           if (!call._alreadyLogged) {
             call._alreadyLogged = true;
-            handleCallEnd(call._outgoingNumber || targetNumber, 'outgoing', status);
+            handleCallEnd(call._outgoingNumber || targetNumber, 'outgoing', status, call._callSid);
           }
         },
         onError: (status) => {
           if (!call._alreadyLogged) {
             call._alreadyLogged = true;
-            handleCallEnd(call._outgoingNumber || targetNumber, 'outgoing', status);
+            handleCallEnd(call._outgoingNumber || targetNumber, 'outgoing', status, call._callSid);
           }
         }
       });
@@ -184,9 +285,13 @@ function Dialer({ device, currentCall, setCurrentCall, status, setStatus, contac
     if (device && currentCall) {
       console.log('Hanging up...');
       
+      // Refresh PiP permission on user action
+      setPipPermissionGranted(true);
+      
       // Get call details before disconnecting
       const number = currentCall._callerNumber || currentCall._outgoingNumber;
       const direction = currentCall._direction || 'outgoing';
+      const callSid = currentCall._callSid;
       
       // Mark that we're manually hanging up and already logged
       currentCall._manualHangup = true;
@@ -198,7 +303,9 @@ function Dialer({ device, currentCall, setCurrentCall, status, setStatus, contac
       // Force UI reset and log only if we have valid number
       setTimeout(() => {
         if (number && number !== 'client:browser-client-1000') {
-          handleCallEnd(number, direction, 'completed');
+          // For outgoing calls, callSid is optional (client creates entry)
+          // For incoming calls, callSid is required (client updates entry)
+          handleCallEnd(number, direction, 'completed', callSid);
         } else {
           // Just reset UI without logging if number is invalid
           setIsInCall(false);
@@ -261,31 +368,50 @@ function Dialer({ device, currentCall, setCurrentCall, status, setStatus, contac
       // Create PiP content
       const container = pipWin.document.createElement('div');
       container.style.cssText = 'padding: 20px; font-family: Arial, sans-serif; text-align: center;';
-      container.innerHTML = `
-        <div style="margin-bottom: 15px;">
-          <div style="font-size: 18px; font-weight: bold; color: #333; margin-bottom: 5px;">${callWith || phoneNumber}</div>
-          <div id="pip-timer" style="font-size: 24px; color: #667eea; font-weight: 600;">${callTimer}</div>
-        </div>
-        <button id="pip-hangup" style="
-          background: #e74c3c;
-          color: white;
-          border: none;
-          padding: 12px 30px;
-          border-radius: 8px;
-          font-size: 16px;
-          cursor: pointer;
-          transition: all 0.2s;
-        ">
-          <i class="fas fa-phone-slash"></i> Hang Up
-        </button>
-      `;
+      
+      const updatePiPContent = () => {
+        container.innerHTML = `
+          <div style="margin-bottom: 15px;">
+            <div style="font-size: 18px; font-weight: bold; color: #333; margin-bottom: 5px;">${callWith || phoneNumber}</div>
+            <div id="pip-timer" style="font-size: 24px; color: #667eea; font-weight: 600;">${callTimer}</div>
+          </div>
+          <button id="pip-hangup" style="
+            background: #e74c3c;
+            color: white;
+            border: none;
+            padding: 12px 30px;
+            border-radius: 8px;
+            font-size: 16px;
+            cursor: pointer;
+            transition: all 0.2s;
+          ">
+            <i class="fas fa-phone-slash"></i> Hang Up
+          </button>
+        `;
+        
+        // Re-attach hangup handler after innerHTML update
+        const hangupBtn = pipWin.document.getElementById('pip-hangup');
+        if (hangupBtn) {
+          hangupBtn.addEventListener('click', () => {
+            hangup();
+            pipWin.close();
+          });
+        }
+      };
+      
+      updatePiPContent();
       pipWin.document.body.appendChild(container);
 
-      // Update timer in PiP
+      // Update timer in PiP every second using fresh elapsed time
       const timerInterval = setInterval(() => {
-        const timerEl = pipWin.document.getElementById('pip-timer');
-        if (timerEl) {
-          timerEl.textContent = callTimer;
+        if (callStartTimeRef.current && !pipWin.closed) {
+          const elapsed = Math.floor((Date.now() - callStartTimeRef.current) / 1000);
+          const minutes = Math.floor(elapsed / 60).toString().padStart(2, '0');
+          const seconds = (elapsed % 60).toString().padStart(2, '0');
+          const timerEl = pipWin.document.getElementById('pip-timer');
+          if (timerEl) {
+            timerEl.textContent = `${minutes}:${seconds}`;
+          }
         }
       }, 1000);
 
@@ -338,16 +464,21 @@ function Dialer({ device, currentCall, setCurrentCall, status, setStatus, contac
     return duration;
   };
 
-  const handleCallEnd = (number, direction, status) => {
+  const handleCallEnd = (number, direction, status, callSid) => {
     const duration = stopTimer();
     
     // Get contact name from current contacts state
     const contactName = getContactName(number);
     
-    console.log(`Logging call: ${number} (${contactName || 'no name'}), ${direction}, ${status}, ${duration}s`);
+    console.log(`Call ended: ${number} (${contactName || 'no name'}), ${direction}, ${status}, ${duration}s, SID: ${callSid || 'N/A'}`);
     
-    // Log the call with contact name
-    TwilioService.logCall(number, direction, status, duration, contactName);
+    // Log the call
+    // Incoming: requires callSid for update
+    // Outgoing: creates new entry (callSid optional)
+    TwilioService.logCall(number, direction, status, duration, contactName, callSid).then(() => {
+      // Refresh logs after logging
+      if (onCallEnd) onCallEnd();
+    });
     
     // Check if there's a held call to switch back to
     if (heldCall && !heldCall._ended) {
@@ -398,11 +529,20 @@ function Dialer({ device, currentCall, setCurrentCall, status, setStatus, contac
       window.device = device;
     }
     
+    // Expose status setter for IncomingCallModal
+    window.setDialerStatus = setStatus;
+    
     window.handleIncomingCallAnswer = (call, number, name) => {
       // Store the actual caller number on the call object
       call._callerNumber = number;
       call._callerName = name;
       call._direction = 'incoming';
+      // Use customParameters.get('CallSid') (from server) not parameters.CallSid (client leg ID)
+      // customParameters is a Map, not an object!
+      call._callSid = call.customParameters?.get('CallSid') || call.parameters.CallSid;
+      console.log('📞 Call SID extracted:', call._callSid);
+      console.log('From parameters:', call.parameters.CallSid);
+      console.log('From customParameters:', call.customParameters?.get('CallSid'));
       
       setCallWith(name || number);
       setIsInCall(true);
@@ -418,7 +558,37 @@ function Dialer({ device, currentCall, setCurrentCall, status, setStatus, contac
           console.log('Incoming call disconnected');
           if (!call._alreadyLogged) {
             call._alreadyLogged = true;
-            handleCallEnd(call._callerNumber || number, 'incoming', 'completed');
+            const duration = Math.round((Date.now() - callStartTimeRef.current) / 1000);
+            const contactName = contactsRef.current[call._callerNumber || number] || name;
+            TwilioService.logCall(call._callerNumber || number, 'incoming', 'completed', duration, contactName, call._callSid).then(() => {
+              // Refresh logs from server after update
+              if (onCallEnd) onCallEnd();
+            });
+            
+            // Reset UI (don't call handleCallEnd - already logged above)
+            stopTimer();
+            // Check if there's a held call to switch back to
+            if (heldCall && !heldCall._ended) {
+              console.log('Switching back to held call');
+              setCurrentCall(heldCall);
+              heldCall.mute(false);
+              heldCall._onHold = false;
+              setHeldCall(null);
+              setCallWith(heldCall._callerName || heldCall._callerNumber || 'Unknown');
+              setCallState('CONNECTED');
+              setStatus({ message: 'Resumed from hold', type: 'connected' });
+              setIsInCall(true);
+              setCallTimer('--:--');
+            } else {
+              setIsInCall(false);
+              setCallState('IDLE');
+              setCallTimer('00:00');
+              setCurrentCall(null);
+              setPhoneNumber('+');
+              setStatus({ message: 'Ready', type: 'ready' });
+              setIsConference(false);
+              setConferenceParticipants([]);
+            }
           }
         });
         
@@ -426,7 +596,23 @@ function Dialer({ device, currentCall, setCurrentCall, status, setStatus, contac
           console.error('Incoming call error:', error);
           if (!call._alreadyLogged) {
             call._alreadyLogged = true;
-            handleCallEnd(call._callerNumber || number, 'incoming', 'failed');
+            const duration = Math.round((Date.now() - callStartTimeRef.current) / 1000);
+            const contactName = contactsRef.current[call._callerNumber || number] || name;
+            TwilioService.logCall(call._callerNumber || number, 'incoming', 'failed', duration, contactName, call._callSid).then(() => {
+              // Refresh logs from server after update
+              if (onCallEnd) onCallEnd();
+            });
+            
+            // Reset UI (don't call handleCallEnd - already logged above)
+            stopTimer();
+            setIsInCall(false);
+            setCallState('IDLE');
+            setCallTimer('00:00');
+            setCurrentCall(null);
+            setPhoneNumber('+');
+            setStatus({ message: 'Ready', type: 'ready' });
+            setIsConference(false);
+            setConferenceParticipants([]);
           }
         });
       }
@@ -437,7 +623,17 @@ function Dialer({ device, currentCall, setCurrentCall, status, setStatus, contac
       if (!call._alreadyLogged) {
         call._alreadyLogged = true;
         const contactName = contactsRef.current[number] || name;
-        TwilioService.logCall(number, 'incoming', status, 0, contactName);
+        // Use customParameters.get('CallSid') (from server) not parameters.CallSid (client leg ID)
+        const callSid = call.customParameters?.get('CallSid') || call.parameters?.CallSid;
+        console.log('📞 Missed call SID:', callSid);
+        TwilioService.logCall(number, 'incoming', status, 0, contactName, callSid).then(() => {
+          // Refresh logs from server after update
+          if (onCallEnd) onCallEnd();
+        });
+        
+        // Reset status to Ready
+        setStatus({ message: 'Ready', type: 'ready' });
+        
         if (onCallEnd) onCallEnd();
       }
     };
@@ -458,6 +654,9 @@ function Dialer({ device, currentCall, setCurrentCall, status, setStatus, contac
       newCall._callerNumber = newNumber;
       newCall._callerName = newName;
       newCall._direction = 'incoming';
+      // Extract call SID from customParameters (server-side) or parameters (fallback)
+      newCall._callSid = newCall.customParameters?.get('CallSid') || newCall.parameters.CallSid;
+      console.log('📞 Hold & Answer - Call SID:', newCall._callSid);
       
       setCallWith(newName || newNumber);
       setCallState('CONNECTED');
@@ -475,7 +674,36 @@ function Dialer({ device, currentCall, setCurrentCall, status, setStatus, contac
           console.log('Active call disconnected, switching to held call');
           if (!newCall._alreadyLogged) {
             newCall._alreadyLogged = true;
-            handleCallEnd(newCall._callerNumber || newNumber, 'incoming', 'completed');
+            const duration = Math.round((Date.now() - callStartTimeRef.current) / 1000);
+            const contactName = contactsRef.current[newCall._callerNumber || newNumber] || newName;
+            TwilioService.logCall(newCall._callerNumber || newNumber, 'incoming', 'completed', duration, contactName, newCall._callSid).then(() => {
+              // Refresh logs from server after update
+              if (onCallEnd) onCallEnd();
+            });
+            
+            // Reset UI and switch to held call (don't call handleCallEnd - already logged above)
+            stopTimer();
+            if (heldCall && !heldCall._ended) {
+              console.log('Switching back to held call');
+              setCurrentCall(heldCall);
+              heldCall.mute(false);
+              heldCall._onHold = false;
+              setHeldCall(null);
+              setCallWith(heldCall._callerName || heldCall._callerNumber || 'Unknown');
+              setCallState('CONNECTED');
+              setStatus({ message: 'Resumed from hold', type: 'connected' });
+              setIsInCall(true);
+              setCallTimer('--:--');
+            } else {
+              setIsInCall(false);
+              setCallState('IDLE');
+              setCallTimer('00:00');
+              setCurrentCall(null);
+              setPhoneNumber('+');
+              setStatus({ message: 'Ready', type: 'ready' });
+              setIsConference(false);
+              setConferenceParticipants([]);
+            }
           }
         });
         
@@ -483,7 +711,23 @@ function Dialer({ device, currentCall, setCurrentCall, status, setStatus, contac
           console.error('Active call error:', error);
           if (!newCall._alreadyLogged) {
             newCall._alreadyLogged = true;
-            handleCallEnd(newCall._callerNumber || newNumber, 'incoming', 'failed');
+            const duration = Math.round((Date.now() - callStartTimeRef.current) / 1000);
+            const contactName = contactsRef.current[newCall._callerNumber || newNumber] || newName;
+            TwilioService.logCall(newCall._callerNumber || newNumber, 'incoming', 'failed', duration, contactName, newCall._callSid).then(() => {
+              // Refresh logs from server after update
+              if (onCallEnd) onCallEnd();
+            });
+            
+            // Reset UI (don't call handleCallEnd - already logged above)
+            stopTimer();
+            setIsInCall(false);
+            setCallState('IDLE');
+            setCallTimer('00:00');
+            setCurrentCall(null);
+            setPhoneNumber('+');
+            setStatus({ message: 'Ready', type: 'ready' });
+            setIsConference(false);
+            setConferenceParticipants([]);
           }
         });
       }
@@ -491,6 +735,11 @@ function Dialer({ device, currentCall, setCurrentCall, status, setStatus, contac
     
     window.handleConferenceAdd = (call, number, name) => {
       console.log('Adding to conference:', name || number);
+      // Extract call SID for the conference participant
+      call._callSid = call.customParameters?.get('CallSid') || call.parameters.CallSid;
+      call._direction = 'incoming';
+      console.log('📞 Conference - Call SID:', call._callSid);
+      
       setIsConference(true);
       setConferenceParticipants(prev => [...prev, { number, name: name || number, call }]);
       setCallWith('Conference Call');
@@ -499,6 +748,14 @@ function Dialer({ device, currentCall, setCurrentCall, status, setStatus, contac
       call.on('disconnect', () => {
         console.log('Participant left:', name || number);
         setConferenceParticipants(prev => prev.filter(p => p.number !== number));
+        // Log the conference participant's disconnect
+        if (!call._alreadyLogged) {
+          call._alreadyLogged = true;
+          const contactName = contactsRef.current[number] || name;
+          TwilioService.logCall(number, 'incoming', 'completed', 0, contactName, call._callSid).then(() => {
+            if (onCallEnd) onCallEnd();
+          });
+        }
       });
     };
     
@@ -536,17 +793,50 @@ function Dialer({ device, currentCall, setCurrentCall, status, setStatus, contac
         </div>
       )}
       
-      <input
-        id="phoneInput"
-        type="text"
-        className="phone-input"
-        placeholder="Phone number"
-        value={phoneNumber}
-        onChange={handlePhoneInput}
-        onKeyDown={handlePhoneKeyDown}
-        disabled={isInCall}
-      />
-      
+      <div className="phone-input-container">
+        <input
+          id="phoneInput"
+          type="text"
+          className="phone-input"
+          placeholder="Phone number"
+          value={phoneNumber}
+          onChange={handlePhoneInput}
+          onKeyDown={handlePhoneKeyDown}
+          disabled={isInCall}
+          autoComplete="off"
+        />
+        {showSuggestions && suggestions.length > 0 && (
+          <div className="suggestions-dropdown">
+            {suggestions.map((call, index) => (
+              <div
+                key={call.number + index}
+                className={`suggestion-item ${index === selectedSuggestionIndex ? 'selected' : ''}`}
+                onClick={() => selectSuggestion(call)}
+              >
+                <div className="suggestion-name">{call.name || 'Unknown'}</div>
+                <div className="suggestion-number">{call.number}</div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+      {callerIds && !isInCall && (
+        <div className="caller-id-selector">
+          <label htmlFor="callerIdToggle">
+            <input 
+              id="callerIdToggle"
+              type="checkbox"
+              checked={useIsraelAlt} 
+              onChange={(e) => {
+                console.log('Checkbox clicked! New value:', e.target.checked);
+                setUseIsraelAlt(e.target.checked);
+                console.log('State should now be:', e.target.checked);
+              }}
+            />
+            Use Alternate Israel Number ({callerIds.israel_alt})
+          </label>
+        </div>
+      )}      
       <button
         className="btn btn-call"
         onClick={() => makeCall()}

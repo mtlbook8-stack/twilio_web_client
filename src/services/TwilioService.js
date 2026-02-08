@@ -1,4 +1,6 @@
 export class TwilioService {
+  static tokenRefreshTimer = null;
+
   static async initialize(setStatus, onIncomingCall) {
     try {
       // Get access token from Python API
@@ -17,6 +19,14 @@ export class TwilioService {
       });
       
       console.log('Device created with allowIncomingWhileBusy enabled');
+      
+      // Set up automatic token refresh (refresh 5 minutes before expiration)
+      if (data.ttl) {
+        const refreshInterval = (data.ttl - 300) * 1000; // Convert to ms, refresh 5 min early
+        console.log(`🔄 Token auto-refresh will occur every ${Math.round(refreshInterval / 60000)} minutes`);
+        
+        TwilioService.setupTokenRefresh(device, refreshInterval, setStatus);
+      }
 
       // Device ready
       device.on('registered', () => {
@@ -28,6 +38,8 @@ export class TwilioService {
       console.log('Setting up incoming call handler');
       device.on('incoming', (call) => {
         console.log('🔔 DEVICE INCOMING EVENT FIRED:', call.parameters.From);
+        console.log('Call parameters:', call.parameters);
+        console.log('Call customParameters:', call.customParameters);
         console.log('Device state:', device.state);
         console.log('Calling onIncomingCall...');
         onIncomingCall(call);
@@ -46,6 +58,37 @@ export class TwilioService {
     } catch (error) {
       throw error;
     }
+  }
+
+  static setupTokenRefresh(device, interval, setStatus) {
+    // Clear any existing timer
+    if (TwilioService.tokenRefreshTimer) {
+      clearInterval(TwilioService.tokenRefreshTimer);
+    }
+
+    // Set up periodic token refresh
+    TwilioService.tokenRefreshTimer = setInterval(async () => {
+      try {
+        console.log('🔄 Refreshing Twilio access token...');
+        const response = await fetch('/api/token');
+        const data = await response.json();
+        
+        if (data.token && device) {
+          await device.updateToken(data.token);
+          console.log('✅ Token refreshed successfully');
+          
+          // Brief status update
+          const previousStatus = setStatus;
+          setStatus({ message: 'Token refreshed', type: 'ready' });
+          setTimeout(() => {
+            setStatus({ message: 'Ready', type: 'ready' });
+          }, 2000);
+        }
+      } catch (error) {
+        console.error('❌ Failed to refresh token:', error);
+        setStatus({ message: 'Token refresh failed - please refresh page', type: 'error' });
+      }
+    }, interval);
   }
 
   static setupCallEvents(call, callbacks) {
@@ -82,21 +125,48 @@ export class TwilioService {
     });
   }
 
-  static async logCall(phoneNumber, direction, status, duration, contactName) {
+  static async logCall(phoneNumber, direction, status, duration, contactName, callSid = null) {
+    console.log('🔹 logCall called:', { phoneNumber, direction, status, duration, contactName, callSid });
+    
     try {
-      const logEntry = {
-        number: phoneNumber,
-        name: contactName || null,
-        direction,
-        status,
-        duration
-      };
+      // Incoming calls: Server creates, client updates (requires callSid)
+      if (direction === 'incoming') {
+        if (!callSid) {
+          console.error('ERROR: Incoming call missing callSid - cannot update!');
+          return;
+        }
+        
+        console.log('📥 Updating incoming call...');
+        await fetch('/api/update-call-history', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            call_sid: callSid,
+            status: status,
+            duration: duration
+          })
+        });
+        console.log(`✅ Updated incoming call ${callSid} with status: ${status}, duration: ${duration}`);
+      } else {
+        // Outgoing calls: Client creates new entry
+        console.log('📤 Creating outgoing call entry...');
+        const logEntry = {
+          number: phoneNumber,
+          name: contactName || null,
+          direction,
+          status,
+          duration
+        };
 
-      await fetch('/api/call-history', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(logEntry)
-      });
+        const response = await fetch('/api/call-history', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(logEntry)
+        });
+        
+        const result = await response.json();
+        console.log(`✅ Created outgoing call log: ${phoneNumber}, status: ${status}, duration: ${duration}`, result);
+      }
     } catch (error) {
       console.error('Failed to log call:', error);
     }

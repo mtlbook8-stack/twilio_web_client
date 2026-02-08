@@ -13,7 +13,7 @@ timeout /t 2 /nobreak >nul
 REM Start React Dev Server (hidden)
 echo [2/3] Starting React Dev Server on port 3000...
 echo Set WshShell = CreateObject("WScript.Shell") > "%temp%\start_react.vbs"
-echo WshShell.Run "cmd /c cd /d %~dp0 && set BROWSER=none && npm start", 0 >> "%temp%\start_react.vbs"
+echo WshShell.Run "cmd /c cd /d %~dp0 && npm start", 0 >> "%temp%\start_react.vbs"
 cscript //nologo "%temp%\start_react.vbs"
 del "%temp%\start_react.vbs"
 timeout /t 5 /nobreak >nul
@@ -35,9 +35,8 @@ echo  React App:     http://localhost:3000
 echo  Flask API:     http://localhost:5000
 echo  ngrok tunnel:  Check ngrok dashboard
 echo.
-echo  Opening browser in 3 seconds...
-timeout /t 3 /nobreak >nul
-start http://localhost:3000
+echo  Browser should open automatically...
+echo  (If not, go to http://localhost:3000)
 echo.
 echo  To stop all servers, run STOP-ALL.bat
 echo ================================================

@@ -19,15 +19,22 @@ function IncomingCallModal({ incomingCall, setIncomingCall, setCurrentCall, curr
       incomingCall._cancelHandlerAttached = true;
       
       incomingCall.on('cancel', () => {
-        console.log('Incoming call canceled');
-        if (!incomingCall._wasAnswered && window.handleIncomingCallMissed) {
-          window.handleIncomingCallMissed(incomingCall, callerNumber, callerName, 'missed');
-        }
+        console.log('Incoming call canceled - entry already exists as missed');
         setIncomingCall(null);
+        
+        // Reset status
+        if (window.setDialerStatus) {
+          window.setDialerStatus({ message: 'Ready', type: 'ready' });
+        }
       });
       
       incomingCall.on('reject', () => {
         console.log('Incoming call rejected');
+        
+        // Mark as answered to prevent cancel from firing
+        incomingCall._wasAnswered = true;
+        
+        // Update the existing entry with rejected status
         if (window.handleIncomingCallMissed) {
           window.handleIncomingCallMissed(incomingCall, callerNumber, callerName, 'rejected');
         }
@@ -106,6 +113,11 @@ function IncomingCallModal({ incomingCall, setIncomingCall, setCurrentCall, curr
   const rejectCall = () => {
     if (incomingCall) {
       console.log('Rejecting call...');
+      
+      // Mark as answered to prevent cancel from also firing
+      incomingCall._wasAnswered = true;
+      
+      // Reject will trigger the reject event which updates the entry
       incomingCall.reject();
       setIncomingCall(null);
     }
