@@ -26,6 +26,9 @@ function IncomingCallModal({ incomingCall, setIncomingCall, setCurrentCall, curr
         if (window.setDialerStatus) {
           window.setDialerStatus({ message: 'Ready', type: 'ready' });
         }
+
+        // Refresh call logs so the missed call appears without manual page refresh
+        if (onCallEnd) onCallEnd();
       });
       
       incomingCall.on('reject', () => {
