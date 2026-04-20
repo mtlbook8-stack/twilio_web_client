@@ -1,5 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { TwilioService } from '../services/TwilioService';
+import { HeadsetService } from '../services/HeadsetService';
+import { showToast } from './Toast';
 import './Dialer.css';
 
 function Dialer({ device, currentCall, setCurrentCall, status, setStatus, contacts, callLogs = [], onCallEnd }) {
@@ -19,12 +21,31 @@ function Dialer({ device, currentCall, setCurrentCall, status, setStatus, contac
   const [suggestions, setSuggestions] = useState([]);
   const [selectedSuggestionIndex, setSelectedSuggestionIndex] = useState(-1);
   const [showSuggestions, setShowSuggestions] = useState(false);
+  const [headsetConnected, setHeadsetConnected] = useState(false);
+  const [micMuted, setMicMuted] = useState(false);
   
   const callStartTimeRef = useRef(null);
   const timerIntervalRef = useRef(null);
   const contactsRef = useRef(contacts);
   const currentCallRef = useRef(currentCall);
   const useIsraelAltRef = useRef(false);
+  const isInCallRef = useRef(false);
+  const deviceRef = useRef(device);
+  const jabraMutedRef = useRef(false);
+  const trackMutedRef = useRef(false);
+
+  // Helper to fully reset call UI state
+  const resetCallUI = () => {
+    setIsInCall(false);
+    setCallState('IDLE');
+    setCallTimer('00:00');
+    setCurrentCall(null);
+    setPhoneNumber('+');
+    setStatus({ message: 'Ready', type: 'ready' });
+    setIsConference(false);
+    setConferenceParticipants([]);
+    setShowKeypad(false);
+  };
   
   // Keep refs in sync with props and state
   useEffect(() => {
@@ -38,6 +59,14 @@ function Dialer({ device, currentCall, setCurrentCall, status, setStatus, contac
   useEffect(() => {
     useIsraelAltRef.current = useIsraelAlt;
   }, [useIsraelAlt]);
+
+  useEffect(() => {
+    isInCallRef.current = isInCall;
+  }, [isInCall]);
+
+  useEffect(() => {
+    deviceRef.current = device;
+  }, [device]);
 
   // Fetch available caller IDs
   useEffect(() => {
@@ -120,6 +149,127 @@ function Dialer({ device, currentCall, setCurrentCall, status, setStatus, contac
       window.removeEventListener('blur', handleBlur);
     };
   }, [isInCall, pipWindow, pipPermissionGranted]);
+
+  // Auto-connect to previously authorized headset + watch for connect/disconnect
+  useEffect(() => {
+    if (!HeadsetService.isSupported()) return;
+
+    // Set callbacks early so deviceAdded events are caught during init
+    HeadsetService.setCallbacks({
+      onHookSwitch: (action) => {
+        if (action === 'hangup' && isInCallRef.current) {
+          console.log('🎧 Jabra SDK: Hanging up via headset call button');
+          if (deviceRef.current) deviceRef.current.disconnectAll();
+        }
+      },
+      onMuteChange: (state) => {
+        const s = String(state).toUpperCase();
+        if (s.includes('MUTE') && !s.includes('UNMUTE')) {
+          jabraMutedRef.current = true;
+          setMicMuted(true);
+          if (isInCallRef.current) {
+            showToast('⚠️ Headset mic muted — Twilio call audio affected!', 'warning', 5000);
+          } else {
+            showToast('🎧 Headset microphone muted', 'warning', 3000);
+          }
+        } else if (s.includes('UNMUTE')) {
+          jabraMutedRef.current = false;
+          setMicMuted(trackMutedRef.current);
+          if (!isInCallRef.current && window.answerPendingIncomingCall) {
+            console.log('🎧 Jabra SDK: Answering incoming call via boom arm open');
+            window.answerPendingIncomingCall();
+          } else {
+            showToast('🎧 Headset microphone unmuted', 'info', 2000);
+          }
+        }
+      },
+      onConnectedChange: (connected) => {
+        console.log('🎧 Jabra SDK: Connected changed:', connected);
+        setHeadsetConnected(connected);
+      },
+    });
+
+    HeadsetService.tryAutoConnect().then(ok => {
+      if (ok) {
+        console.log('🎧 Jabra SDK: Auto-connected to headset');
+      }
+    });
+  }, []);
+
+  // Sync headset call state via Jabra SDK
+  useEffect(() => {
+    if (!headsetConnected) return;
+
+    if (isInCall) {
+      console.log('🎧 Jabra SDK: startCall (call active)');
+      HeadsetService.startCall();
+    } else {
+      console.log('🎧 Jabra SDK: endCall (no call)');
+      HeadsetService.endCall();
+    }
+  }, [headsetConnected, isInCall]);
+
+  const connectHeadset = async () => {
+    console.log('🎧 Jabra SDK: User clicked Connect Headset');
+    const ok = await HeadsetService.connect();
+    setHeadsetConnected(ok);
+    if (ok) {
+      console.log('🎧 Jabra SDK: ✅ Headset connected successfully');
+    } else {
+      console.log('🎧 Jabra SDK: ❌ Connection failed or cancelled');
+    }
+  };
+
+  // Monitor mic track for mute detection (catches Teams-owned mute)
+  // Jabra callback handles headset mute when we have call control.
+  // This handles the case where Teams owns call control and mutes the track.
+  useEffect(() => {
+    if (!currentCall) {
+      jabraMutedRef.current = false;
+      trackMutedRef.current = false;
+      setMicMuted(false);
+      return;
+    }
+
+    let cancelled = false;
+    let pollInterval = null;
+
+    const tryMonitor = () => {
+      if (cancelled) return;
+      const stream = currentCall.getLocalStream && currentCall.getLocalStream();
+      const track = stream && stream.getAudioTracks()[0];
+      if (!track) {
+        setTimeout(tryMonitor, 500);
+        return;
+      }
+
+      let wasMuted = track.muted || !track.enabled;
+      trackMutedRef.current = wasMuted;
+      setMicMuted(wasMuted || jabraMutedRef.current);
+
+      pollInterval = setInterval(() => {
+        const isMuted = track.muted || !track.enabled;
+        if (isMuted !== wasMuted) {
+          wasMuted = isMuted;
+          trackMutedRef.current = isMuted;
+          setMicMuted(isMuted || jabraMutedRef.current);
+          if (isMuted) {
+            showToast('⚠️ Microphone muted — Twilio call audio affected!', 'warning', 5000);
+          } else if (!jabraMutedRef.current) {
+            showToast('Microphone unmuted — call audio restored', 'success', 3000);
+          }
+        }
+      }, 500);
+    };
+
+    tryMonitor();
+
+    return () => {
+      cancelled = true;
+      if (pollInterval) clearInterval(pollInterval);
+      trackMutedRef.current = false;
+    };
+  }, [currentCall]);
 
   const handlePhoneInput = (e) => {
     let value = e.target.value;
@@ -308,18 +458,25 @@ function Dialer({ device, currentCall, setCurrentCall, status, setStatus, contac
           handleCallEnd(number, direction, 'completed', callSid);
         } else {
           // Just reset UI without logging if number is invalid
-          setIsInCall(false);
-          setCallState('IDLE');
-          setCallTimer('00:00');
-          setCurrentCall(null);
-          setPhoneNumber('+');
-          setStatus({ message: 'Ready', type: 'ready' });
-          setIsConference(false);
-          setConferenceParticipants([]);
+          resetCallUI();
           if (onCallEnd) onCallEnd();
         }
       }, 500);
     }
+  };
+
+  const toggleMute = () => {
+    if (!currentCall) return;
+    const stream = currentCall.getLocalStream && currentCall.getLocalStream();
+    const track = stream && stream.getAudioTracks()[0];
+    if (!track) return;
+
+    const newMuted = !micMuted;
+    track.enabled = !newMuted;
+    trackMutedRef.current = newMuted;
+    jabraMutedRef.current = newMuted;
+    setMicMuted(newMuted);
+    showToast(newMuted ? '🔇 Microphone muted' : '🔊 Microphone unmuted', newMuted ? 'warning' : 'success', 2000);
   };
 
   const sendDTMF = (digit) => {
@@ -494,14 +651,7 @@ function Dialer({ device, currentCall, setCurrentCall, status, setStatus, contac
       setCallTimer('--:--'); // Show placeholder, held call duration unknown
     } else {
       // Reset UI completely
-      setIsInCall(false);
-      setCallState('IDLE');
-      setCallTimer('00:00');
-      setCurrentCall(null);
-      setPhoneNumber('+');
-      setStatus({ message: 'Ready', type: 'ready' });
-      setIsConference(false);
-      setConferenceParticipants([]);
+      resetCallUI();
       setHeldCall(null);
     }
     
@@ -580,14 +730,7 @@ function Dialer({ device, currentCall, setCurrentCall, status, setStatus, contac
               setIsInCall(true);
               setCallTimer('--:--');
             } else {
-              setIsInCall(false);
-              setCallState('IDLE');
-              setCallTimer('00:00');
-              setCurrentCall(null);
-              setPhoneNumber('+');
-              setStatus({ message: 'Ready', type: 'ready' });
-              setIsConference(false);
-              setConferenceParticipants([]);
+              resetCallUI();
             }
           }
         });
@@ -605,14 +748,7 @@ function Dialer({ device, currentCall, setCurrentCall, status, setStatus, contac
             
             // Reset UI (don't call handleCallEnd - already logged above)
             stopTimer();
-            setIsInCall(false);
-            setCallState('IDLE');
-            setCallTimer('00:00');
-            setCurrentCall(null);
-            setPhoneNumber('+');
-            setStatus({ message: 'Ready', type: 'ready' });
-            setIsConference(false);
-            setConferenceParticipants([]);
+            resetCallUI();
           }
         });
       }
@@ -695,14 +831,7 @@ function Dialer({ device, currentCall, setCurrentCall, status, setStatus, contac
               setIsInCall(true);
               setCallTimer('--:--');
             } else {
-              setIsInCall(false);
-              setCallState('IDLE');
-              setCallTimer('00:00');
-              setCurrentCall(null);
-              setPhoneNumber('+');
-              setStatus({ message: 'Ready', type: 'ready' });
-              setIsConference(false);
-              setConferenceParticipants([]);
+              resetCallUI();
             }
           }
         });
@@ -720,14 +849,7 @@ function Dialer({ device, currentCall, setCurrentCall, status, setStatus, contac
             
             // Reset UI (don't call handleCallEnd - already logged above)
             stopTimer();
-            setIsInCall(false);
-            setCallState('IDLE');
-            setCallTimer('00:00');
-            setCurrentCall(null);
-            setPhoneNumber('+');
-            setStatus({ message: 'Ready', type: 'ready' });
-            setIsConference(false);
-            setConferenceParticipants([]);
+            resetCallUI();
           }
         });
       }
@@ -781,6 +903,13 @@ function Dialer({ device, currentCall, setCurrentCall, status, setStatus, contac
         <div className="in-call-display">
           <div className="call-state">{callState}</div>
           <div className="call-with">{callWith}</div>
+          <button
+            className={`btn btn-mute ${micMuted ? 'muted' : ''}`}
+            onClick={toggleMute}
+          >
+            <i className={`fas ${micMuted ? 'fa-microphone-slash' : 'fa-microphone'}`}></i>
+            {micMuted ? ' Unmute' : ' Mute'}
+          </button>
           {isConference && conferenceParticipants.length > 0 && (
             <div className="conference-participants">
               <div className="participants-label">Participants:</div>
@@ -872,6 +1001,21 @@ function Dialer({ device, currentCall, setCurrentCall, status, setStatus, contac
         </button>
       )}
       
+      {HeadsetService.isSupported() && !headsetConnected && (
+        <button
+          className="btn btn-headset"
+          onClick={connectHeadset}
+        >
+          <i className="fas fa-headset"></i> Connect Headset
+        </button>
+      )}
+
+      {headsetConnected && (
+        <div className="headset-status">
+          <i className="fas fa-headset"></i> Jabra Connected
+        </div>
+      )}
+
       {showKeypad && isInCall && (
         <div className="dtmf-overlay" onClick={() => setShowKeypad(false)}>
           <div className="dtmf-modal" onClick={(e) => e.stopPropagation()}>

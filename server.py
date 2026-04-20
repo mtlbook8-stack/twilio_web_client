@@ -12,10 +12,13 @@ import os
 from datetime import datetime
 from dotenv import load_dotenv
 
+# Ensure working directory is the script's directory (critical for Task Scheduler)
+os.chdir(os.path.dirname(os.path.abspath(__file__)))
+
 # Load environment variables
 load_dotenv()
 
-app = Flask(__name__)
+app = Flask(__name__, static_folder='build', static_url_path='')
 
 # Configuration from environment variables
 TWILIO_ACCOUNT_SID = os.getenv('TWILIO_ACCOUNT_SID')
@@ -116,10 +119,24 @@ def save_json(filename, data):
         json.dump(data, f, indent=2)
 
 # API Routes
-@app.route('/')
-def index():
-    with open('index.html', 'r', encoding='utf-8') as f:
-        return f.read()
+@app.route('/', defaults={'path': ''})
+@app.route('/<path:path>')
+def index(path):
+    """Serve React build — catch-all so React Router works."""
+    # Never intercept /api/* routes
+    if path.startswith('api/'):
+        from flask import abort
+        abort(404)
+    # Serve real static files (JS/CSS/images) directly
+    full = os.path.join(app.static_folder, path)
+    if path and os.path.exists(full):
+        return app.send_static_file(path)
+    # All other paths serve index.html (React Router) — no cache so new builds load immediately
+    response = app.send_static_file('index.html')
+    response.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate'
+    response.headers['Pragma'] = 'no-cache'
+    response.headers['Expires'] = '0'
+    return response
 
 @app.route('/api/token')
 def get_token():
@@ -349,9 +366,12 @@ if __name__ == '__main__':
     print('\n' + '='*60)
     print('  TWILIO CLOUD CALLING APP - PRODUCTION SERVER')
     print('='*60)
-    print('\nServer starting at: http://localhost:5000')
+    print('\nServer starting at: https://0.0.0.0:5000')
     print('Call History: ' + CALL_HISTORY_FILE)
     print('Contacts: ' + CONTACTS_FILE)
     print('\n' + '='*60 + '\n')
-    
-    app.run(debug=True, host='0.0.0.0', port=5000)
+
+    BASE = os.path.dirname(os.path.abspath(__file__))
+    ssl_cert = os.path.join(BASE, 'ssl', 'cert.pem')
+    ssl_key  = os.path.join(BASE, 'ssl', 'key.pem')
+    app.run(debug=False, host='0.0.0.0', port=5000, ssl_context=(ssl_cert, ssl_key))

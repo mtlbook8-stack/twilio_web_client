@@ -1,5 +1,6 @@
 import React, { useEffect } from 'react';
 import { TwilioService } from '../services/TwilioService';
+import { HeadsetService } from '../services/HeadsetService';
 import './IncomingCallModal.css';
 
 function IncomingCallModal({ incomingCall, setIncomingCall, setCurrentCall, currentCall, contacts, onCallEnd }) {
@@ -14,12 +15,38 @@ function IncomingCallModal({ incomingCall, setIncomingCall, setCurrentCall, curr
     callerNumber 
   });
 
+  // Expose answer function for headset & signal incoming call to Jabra headset
+  useEffect(() => {
+    if (incomingCall) {
+      window.answerPendingIncomingCall = () => answerCall();
+
+      // Ring the Jabra headset — if user presses call button, auto-answer
+      if (HeadsetService.connected) {
+        HeadsetService.signalIncomingCall(60000).then(accepted => {
+          if (accepted === true && window.answerPendingIncomingCall) {
+            console.log('🎧 Jabra SDK: Answering incoming call via headset button');
+            window.answerPendingIncomingCall();
+          } else if (accepted === false) {
+            console.log('🎧 Jabra SDK: Call rejected from headset');
+          }
+        });
+      }
+    } else {
+      // incomingCall became null — call was answered, rejected, or cancelled from UI
+      // Stop headset ringing if it's still going
+      HeadsetService.stopRinging();
+      delete window.answerPendingIncomingCall;
+    }
+    return () => { delete window.answerPendingIncomingCall; };
+  }, [incomingCall, currentCall]);
+
   useEffect(() => {
     if (incomingCall && !incomingCall._cancelHandlerAttached) {
       incomingCall._cancelHandlerAttached = true;
       
       incomingCall.on('cancel', () => {
         console.log('Incoming call canceled - entry already exists as missed');
+        HeadsetService.stopRinging();
         setIncomingCall(null);
         
         // Reset status
@@ -49,6 +76,9 @@ function IncomingCallModal({ incomingCall, setIncomingCall, setCurrentCall, curr
     if (incomingCall && currentCall) {
       console.log('Hold and answer initiated');
       
+      // Stop headset ringing immediately
+      HeadsetService.stopRinging();
+      
       // Mark incoming call as answered
       incomingCall._wasAnswered = true;
       
@@ -66,6 +96,9 @@ function IncomingCallModal({ incomingCall, setIncomingCall, setCurrentCall, curr
   const answerCall = () => {
     if (incomingCall) {
       console.log('Answering call...');
+      
+      // Stop headset ringing immediately
+      HeadsetService.stopRinging();
       
       // Mark call as answered to prevent cancel handler from logging it as missed
       incomingCall._wasAnswered = true;
@@ -102,6 +135,9 @@ function IncomingCallModal({ incomingCall, setIncomingCall, setCurrentCall, curr
     if (incomingCall && currentCall) {
       console.log('Adding to conference...');
       
+      // Stop headset ringing immediately
+      HeadsetService.stopRinging();
+      
       // Accept the incoming call to join conference
       incomingCall.accept();
       
@@ -116,6 +152,9 @@ function IncomingCallModal({ incomingCall, setIncomingCall, setCurrentCall, curr
   const rejectCall = () => {
     if (incomingCall) {
       console.log('Rejecting call...');
+      
+      // Stop headset ringing immediately
+      HeadsetService.stopRinging();
       
       // Mark as answered to prevent cancel from also firing
       incomingCall._wasAnswered = true;

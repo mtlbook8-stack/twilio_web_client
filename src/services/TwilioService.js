@@ -19,6 +19,9 @@ export class TwilioService {
       });
       
       console.log('Device created with allowIncomingWhileBusy enabled');
+
+      // Disconnect any stale calls left over from before a page refresh
+      device.disconnectAll();
       
       // Set up automatic token refresh (refresh 5 minutes before expiration)
       if (data.ttl) {

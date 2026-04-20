@@ -1,5 +1,5 @@
 .dialer {
-  grid-column: 1;
+  grid-column: auto;
 }
 
 .status {
@@ -22,8 +22,8 @@
 
 .phone-input {
   width: 100%;
-  padding: 16px;
-  font-size: 24px;
+  padding: clamp(10px, 2vw, 16px);
+  font-size: clamp(18px, 3vw, 24px);
   border: 2px solid #ddd;
   border-radius: 8px;
   font-family: 'Courier New', monospace;
@@ -127,10 +127,10 @@
 
 .btn {
   width: 100%;
-  padding: 16px;
+  padding: clamp(10px, 2vw, 16px);
   border: none;
   border-radius: 8px;
-  font-size: 18px;
+  font-size: clamp(14px, 2vw, 18px);
   font-weight: 600;
   cursor: pointer;
   transition: all 0.2s;
@@ -153,6 +153,28 @@
 
 .btn-hangup:hover:not(:disabled) {
   background: #c82333;
+}
+
+.btn-headset {
+  background: #17a2b8;
+  color: white;
+}
+
+.btn-headset:hover {
+  background: #138496;
+}
+
+.headset-status {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  background: #d4edda;
+  color: #155724;
+  border-radius: 6px;
+  font-size: 13px;
+  font-weight: 500;
+  margin-bottom: 4px;
 }
 
 .btn:disabled {
@@ -184,9 +206,34 @@
 }
 
 .call-timer {
-  font-size: 48px;
+  font-size: clamp(28px, 6vw, 48px);
   font-weight: 300;
   font-family: 'Courier New', monospace;
+}
+
+.btn-mute {
+  background: #6c757d;
+  color: white;
+  width: 100%;
+  margin-bottom: 4px;
+}
+
+.btn-mute:hover:not(:disabled) {
+  background: #5a6268;
+}
+
+.btn-mute.muted {
+  background: rgba(255, 59, 48, 0.8);
+  animation: mute-pulse 2s ease-in-out infinite;
+}
+
+.btn-mute.muted:hover:not(:disabled) {
+  background: rgba(255, 59, 48, 1);
+}
+
+@keyframes mute-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.6; }
 }
 
 .conference-participants {

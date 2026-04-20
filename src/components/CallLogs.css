@@ -1,9 +1,9 @@
 .logs {
-  grid-column: 2;
+  grid-column: auto;
 }
 
 .logs-container {
-  max-height: 600px;
+  max-height: min(600px, 60vh);
   overflow-y: auto;
 }
 
